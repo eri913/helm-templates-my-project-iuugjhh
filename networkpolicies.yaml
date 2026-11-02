@@ -1,0 +1,100 @@
+{{- if .Values.networkPolicy.enabled }}
+{{- $ns := include "tenant.namespace" . }}
+{{- $labels := include "tenant.labels" . }}
+{{- $np := .Values.networkPolicy }}
+# Default deny in both directions — everything below is an explicit allow.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: {{ $ns }}
+  labels:
+    {{- $labels | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes: ["Ingress", "Egress"]
+---
+# Baseline every tenant needs: same-namespace traffic, DNS, and (in the mesh) istiod + ingress gateway.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: baseline
+  namespace: {{ $ns }}
+  labels:
+    {{- $labels | nindent 4 }}
+spec:
+  endpointSelector: {}
+  ingress:
+    - fromEndpoints:
+        - {} # any pod in this namespace
+    {{- if $np.allowFromIngressGateway }}
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: aks-istio-ingress
+    {{- end }}
+    {{- range $np.allowFromNamespaces }}
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: {{ . }}
+    {{- end }}
+  egress:
+    - toEndpoints:
+        - {} # any pod in this namespace
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - { port: "53", protocol: UDP }
+            - { port: "53", protocol: TCP }
+    {{- if .Values.istio.enabled }}
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: aks-istio-system
+            app: istiod
+      toPorts:
+        - ports:
+            - { port: "15012", protocol: TCP } # xDS config + workload certificates
+    {{- end }}
+    {{- range $np.allowToNamespaces }}
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: {{ . }}
+    {{- end }}
+{{- if or $np.allowEgressCIDRs $np.allowInternetEgress $np.allowKubeApiEgress }}
+---
+# Egress leaving the cluster's pods
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: egress-external
+  namespace: {{ $ns }}
+  labels:
+    {{- $labels | nindent 4 }}
+spec:
+  endpointSelector: {}
+  egress:
+    {{- range $np.allowEgressCIDRs }}
+    - toCIDR:
+        - {{ .cidr }}
+      {{- with .ports }}
+      toPorts:
+        - ports:
+            {{- range . }}
+            - { port: {{ . | quote }}, protocol: TCP }
+            {{- end }}
+      {{- end }}
+    {{- end }}
+    {{- if $np.allowInternetEgress }}
+    - toEntities: ["world"]
+      toPorts:
+        - ports:
+            - { port: "443", protocol: TCP }
+    {{- end }}
+    {{- if $np.allowKubeApiEgress }}
+    - toEntities: ["kube-apiserver"]
+    {{- end }}
+{{- end }}
+{{- end }}
+
