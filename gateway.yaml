@@ -1,0 +1,49 @@
+# Shared internal gateway (internal LB in the AKS node subnet). App teams attach VirtualServices with
+#   gateways: [aks-istio-ingress/cuberai-internal]
+apiVersion: networking.istio.io/v1
+kind: Gateway
+metadata:
+  name: cuberai-internal
+  namespace: aks-istio-ingress
+spec:
+  selector:
+    istio: aks-istio-ingressgateway-internal
+  servers:
+    - port:
+        number: 443
+        name: https
+        protocol: HTTPS
+      hosts:
+        - "*/*.<internal-domain>"
+      tls:
+        mode: SIMPLE
+        credentialName: cuberai-ingress-wildcard-tls
+    - port:
+        number: 80
+        name: http
+        protocol: HTTP
+      hosts:
+        - "*/*.<internal-domain>"
+      tls:
+        httpsRedirect: true
+
+# Wildcard cert for the internal ingress gateway. The secret must live in the gateway's namespace.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: cuberai-ingress-wildcard
+  namespace: aks-istio-ingress
+spec:
+  secretName: cuberai-ingress-wildcard-tls
+  issuerRef:
+    kind: ClusterIssuer
+    name: cuberai-internal-ca
+  commonName: "*.<internal-domain>"
+  dnsNames:
+    - "*.<internal-domain>"
+  duration: 2160h # 90d
+  renewBefore: 360h # 15d
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+    rotationPolicy: Always
