@@ -1,7 +1,10 @@
-{{- if .Values.networkPolicy.enabled }}
-{{- $ns := include "tenant.namespace" . }}
+{{- range $name, $_ := .Values.namespaces }}
+{{- with include "tenant.ctx" (list $ $name) | fromYaml }}
+{{- $ns := .name }}
 {{- $labels := include "tenant.labels" . }}
-{{- $np := .Values.networkPolicy }}
+{{- $np := .v.networkPolicy }}
+{{- if $np.enabled }}
+---
 # Default deny in both directions — everything below is an explicit allow.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -48,7 +51,7 @@ spec:
         - ports:
             - { port: "53", protocol: UDP }
             - { port: "53", protocol: TCP }
-    {{- if .Values.istio.enabled }}
+    {{- if .v.istio.enabled }}
     - toEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: aks-istio-system
@@ -97,4 +100,5 @@ spec:
     {{- end }}
 {{- end }}
 {{- end }}
-
+{{- end }}
+{{- end }}
